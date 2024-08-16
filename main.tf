@@ -34,6 +34,8 @@ resource "azurerm_network_security_group" "nsg" {
     delete = "2m"
   }
 }
+
+# NSG Rules
 resource "azurerm_network_security_rule" "ssh" {
   name                       = "SSH"
   priority                   = 1001
@@ -46,8 +48,8 @@ resource "azurerm_network_security_rule" "ssh" {
   destination_address_prefix = "*"
   resource_group_name        = azurerm_resource_group.rg.name
   network_security_group_name = azurerm_network_security_group.nsg.name
-  
 }
+
 resource "azurerm_network_security_rule" "honeypotWebServer" {
   name                        = "honeypotWebServer"
   priority                    = 1002
@@ -60,8 +62,8 @@ resource "azurerm_network_security_rule" "honeypotWebServer" {
   destination_address_prefix  = "*"
   resource_group_name         = azurerm_resource_group.rg.name
   network_security_group_name = azurerm_network_security_group.nsg.name
-  
 }
+
 resource "azurerm_network_security_rule" "honeypotRuleSSH" {
   name                        = "honeypotSSH"
   priority                    = 1003
@@ -74,8 +76,8 @@ resource "azurerm_network_security_rule" "honeypotRuleSSH" {
   destination_address_prefix  = "*"
   resource_group_name         = azurerm_resource_group.rg.name
   network_security_group_name = azurerm_network_security_group.nsg.name
-  
 }
+
 resource "azurerm_network_security_rule" "honeypotRule" {
   name                        = "honeypotALL"
   priority                    = 1004
@@ -88,34 +90,7 @@ resource "azurerm_network_security_rule" "honeypotRule" {
   destination_address_prefix  = "*"
   resource_group_name         = azurerm_resource_group.rg.name
   network_security_group_name = azurerm_network_security_group.nsg.name
-  
 }
-
-# Create a network interface
-resource "azurerm_network_interface" "nic" {
-  name                = var.nic_name
-  location            = var.location
-  resource_group_name = azurerm_resource_group.rg.name
-  
-
-  ip_configuration {
-    name                          = "internal"
-    subnet_id                     = azurerm_subnet.subnet.id
-    private_ip_address_allocation = "Dynamic"
-    public_ip_address_id          = azurerm_public_ip.public_ip.id
-  }
-  timeouts {
-    delete = "2m"
-  }
-}
-resource "azurerm_network_interface_security_group_association" "attach_nsg" {
-  network_interface_id      = azurerm_network_interface.nic.id
-  network_security_group_id = azurerm_network_security_group.nsg.id
-  timeouts {
-    delete = "2m"
-  }
-}
-
 
 # Create a public IP
 resource "azurerm_public_ip" "public_ip" {
@@ -123,6 +98,29 @@ resource "azurerm_public_ip" "public_ip" {
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
   allocation_method   = "Dynamic"
+}
+
+# Create a network interface
+resource "azurerm_network_interface" "nic" {
+  name                = var.nic_name
+  location            = var.location
+  resource_group_name = azurerm_resource_group.rg.name
+
+  ip_configuration {
+    name                          = "internal"
+    subnet_id                     = azurerm_subnet.subnet.id
+    private_ip_address_allocation = "Dynamic"
+    public_ip_address_id          = azurerm_public_ip.public_ip.id
+  }
+  
+  tags = {
+    "Environment" = "Production"
+  }
+}
+
+resource "azurerm_network_interface_security_group_association" "attach_nsg" {
+  network_interface_id      = azurerm_network_interface.nic.id
+  network_security_group_id = azurerm_network_security_group.nsg.id
 }
 
 # Create a Ubuntu virtual machine
@@ -155,9 +153,18 @@ resource "azurerm_linux_virtual_machine" "vm" {
     sku       = "22_04-lts-gen2"
     version   = "latest"
   }
-  depends_on = [ azurerm_network_interface_security_group_association.attach_nsg, azurerm_public_ip.public_ip]
+
+  tags = {
+    "Environment" = "Production"
+  }
+
+  depends_on = [
+    azurerm_network_interface_security_group_association.attach_nsg,
+    azurerm_public_ip.public_ip
+  ]
 }
-#Created an installer for tpotce honeypot so now it is fully automated
+
+# Install TPOTCE Honeypot
 resource "null_resource" "install_tpotce_honeypot" {
   depends_on = [
     azurerm_linux_virtual_machine.vm,
@@ -166,30 +173,29 @@ resource "null_resource" "install_tpotce_honeypot" {
     azurerm_network_interface_security_group_association.attach_nsg
   ]
 
-  provisioner "remote-exec" {
-    inline = [
-      "sudo apt-get update -y",
-      "sudo apt-get install -y git",
-      "git clone https://github.com/telekom-security/tpotce",
-      "cd tpotce",
-      "./install.sh <<EOF",
-      "y",
-      "h",
-      "azureuser",
-      "y",
-      "hellohoney",
-      "hellohoney",
-      "EOF",
-      "sudo reboot"
-      
-    ]
+provisioner "remote-exec" {
+  inline = [
+    "sudo apt-get update -y",
+    "sudo apt-get install -y git",
+    "git clone https://github.com/telekom-security/tpotce",
+    "cd tpotce",
+    "./install.sh <<EOF",
+    "y",
+    "h",
+    "azureuser",
+    "y",
+    "hellohoney",
+    "hellohoney",
+    "EOF",
+    "sudo reboot"
+  ]
 
-    connection {
-      type        = "ssh"
-      user        = "azureuser"
-      private_key = file("~/.ssh/id_rsa")
-      host        = azurerm_public_ip.public_ip.ip_address
-    }
+  connection {
+    type        = "ssh"
+    user        = var.admin_username
+    agent       = true
+    host        = azurerm_public_ip.public_ip.ip_address
   }
 }
- 
+
+}
